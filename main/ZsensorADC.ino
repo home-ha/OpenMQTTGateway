@@ -4,7 +4,7 @@
    Act as a wifi or ethernet gateway between your 433mhz/infrared IR signal  and a MQTT broker 
    Send and receiving command by MQTT
  
-    Analog pin reading Addon
+    Analog GPIO reading Addon
   
     Copyright: (c)Florian ROBERT
     
@@ -30,33 +30,59 @@
 
 #ifdef ZsensorADC
 
-#if defined(ESP8266)
-  ADC_MODE(ADC_TOUT);
-#endif
+#  if defined(ESP8266)
+ADC_MODE(ADC_TOUT);
+#  endif
 
 //Time used to wait for an interval before resending adc value
 unsigned long timeadc = 0;
 
-void MeasureADC(){
-  if (millis() > (timeadc + TimeBetweenReadingADC)) {//retriving value of temperature and humidity of the box from DHT every xUL
-    #if defined(ESP8266)
-      yield();
-    #endif
+void setupADC() {
+  Log.notice(F("ADC_GPIO: %d" CR), ADC_GPIO);
+}
+
+void MeasureADC() {
+  if (millis() > (timeadc + TimeBetweenReadingADC)) { //retrieving value of temperature and humidity of the box from DHT every xUL
+#  if defined(ESP8266)
+    yield();
+#  endif
     timeadc = millis();
     static int persistedadc;
-    int val = analogRead(ADC_PIN);
+    int val = analogRead(ADC_GPIO);
     if (isnan(val)) {
-      trc(F("Failed to read from ADC !"));
-    }else{
-      if(val  >= persistedadc + ThresholdReadingADC || val  <= persistedadc - ThresholdReadingADC){
-        trc(F("Creating ADC buffer"));
+      Log.error(F("Failed to read from ADC !" CR));
+    } else {
+      if (val >= persistedadc + ThresholdReadingADC || val <= persistedadc - ThresholdReadingADC) {
+        Log.trace(F("Creating ADC buffer" CR));
+#  if defined(ADC_DIVIDER)
+        const int JSON_MSG_CALC_BUFFER = JSON_OBJECT_SIZE(2);
+#  else
         const int JSON_MSG_CALC_BUFFER = JSON_OBJECT_SIZE(1);
+#  endif
         StaticJsonBuffer<JSON_MSG_CALC_BUFFER> jsonBuffer;
         JsonObject& ADCdata = jsonBuffer.createObject();
         ADCdata.set("adc", (int)val);
-        pub(ADCTOPIC,ADCdata);
+#  if defined(ADC_DIVIDER)
+        float volt = 0;
+#    if defined(ESP32)
+        // Convert the analog reading (which goes from 0 - 4095) to a voltage (0 - 3.3V):
+        volt = val * (3.3 / 4096.0);
+#    elif defined(ESP8266)
+        // Convert the analog reading (which goes from 0 - 1024) to a voltage (0 - 3.3V):
+        volt = val * (3.3 / 1024.0);
+#    else
+        // Asume 5V and 10bits ADC
+        volt = val * (5.0 / 1024.0);
+#    endif
+        volt *= ADC_DIVIDER;
+        // let's give 2 decimal point
+        val = (volt * 100);
+        volt = (float)val / 100.0;
+        ADCdata.set("volt", (float)volt);
+#  endif
+        pub(ADCTOPIC, ADCdata);
         persistedadc = val;
-       }
+      }
     }
   }
 }
